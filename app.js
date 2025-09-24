@@ -117,17 +117,61 @@ function buildDen_LMN(target){
 function buildDen_negH_plus_I_minus_J(target){
   for(let tries=0; tries<100; tries++){
     const H=numLeaf(), I=numLeaf();
-    const Jval = -H.value + I.value - target;
+    const absH = Math.abs(H.value);
+    const negH = {type:'num', value:-absH};
+    const Jval = I.value - target - absH;
     if(inRangeNZ(Jval)){
+      const Jnode = {type:'num', value:Jval};
       return {
-        group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-Math.abs(H.value)}, '+', opCombine(I,'-', {type:'num', value:Jval})) },
-        H, I, J:{type:'num', value:Jval}
+        group: { type:'group', kind:'[]', child: opCombine(negH,'+', opCombine(I,'-', Jnode)) },
+        H:negH, I, J:Jnode
       };
     }
   }
-  return {
-    group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-2}, '+', opCombine({type:'num', value:target+1}, '-', {type:'num', value:1})) }
-  };
+  for(let absH=1; absH<=10; absH++){
+    const negHVal = -absH;
+    if(!inRangeNZ(negHVal)) continue;
+    const desired = target + absH;
+    for(let Ival=-10; Ival<=10; Ival++){
+      if(Ival===0) continue;
+      const Jval = Ival - desired;
+      if(inRangeNZ(Jval)){
+        const negH = {type:'num', value:negHVal};
+        const Inode = {type:'num', value:Ival};
+        const Jnode = {type:'num', value:Jval};
+        return {
+          group: { type:'group', kind:'[]', child: opCombine(negH,'+', opCombine(Inode,'-', Jnode)) },
+          H:negH, I:Inode, J:Jnode
+        };
+      }
+    }
+  }
+  const negH = {type:'num', value:-1};
+  if(target >= 2){
+    let Ival = Math.min(10, target + 2);
+    if(Ival===0) Ival = 2;
+    let Jval = Ival - (target + 1);
+    if(Jval===0){
+      if(Ival < 10){ Ival++; } else { Ival--; }
+      Jval = Ival - (target + 1);
+    }
+    const Inode = {type:'num', value:Ival};
+    const Jnode = {type:'num', value:Jval};
+    return {
+      group: { type:'group', kind:'[]', child: opCombine(negH,'+', opCombine(Inode,'-', Jnode)) },
+      H:negH, I:Inode, J:Jnode
+    };
+  }else{
+    let Ival = Math.max(-10, target);
+    if(Ival===0) Ival = -1;
+    const Jval = Ival - (target + 1);
+    const Inode = {type:'num', value:Ival};
+    const Jnode = {type:'num', value:Jval};
+    return {
+      group: { type:'group', kind:'[]', child: opCombine(negH,'+', opCombine(Inode,'-', Jnode)) },
+      H:negH, I:Inode, J:Jnode
+    };
+  }
 }
 
 // Pattern with exact division: { A - [ B - (C - D) ] } ÷ (-E)
