@@ -1,4 +1,4 @@
-// V18: divisiones exactas con símbolo \div, parser robusto (unicode menos), teclado texto, sin paréntesis dobles
+// V19: exact division, fix denom==0 in builders, robust input, text keyboard, minimal parentheses
 const STATE = {
   total: 15,
   current: 0,
@@ -12,9 +12,7 @@ const STATE = {
 
 function randInt(min, max){ return Math.floor(Math.random()*(max-min+1))+min; }
 function clone(x){ return JSON.parse(JSON.stringify(x)); }
-function inRangeNZ(v){ return v>=-10 && v<=10 && v!==0; }
 
-// ---------- AST ----------
 function evalNode(n){
   if(n.type==='num') return n.value;
   if(n.type==='group') return evalNode(n.child);
@@ -32,8 +30,8 @@ function needParens(child, parentOp, isRight){
   if(child.type==='group' || child.type==='num') return false;
   const pc = prec(child);
   if(parentOp==='/'){
-    if(isRight) return true; // derecha siempre con paréntesis
-    return pc < 2;           // izquierda como multiplicación
+    if(isRight) return true;
+    return pc < 2;
   }
   const pp = (parentOp==='+'||parentOp==='-') ? 1 : 2;
   if(pc < pp) return true;
@@ -48,7 +46,7 @@ function wrapDelim(kind, inner){
 function latexNode(n, parentOp=null, isRight=false){
   if(n.type==='num'){
     if(parentOp && (parentOp==='+'||parentOp==='-'||parentOp==='*'||parentOp==='/') && n.value < 0){
-      return `\\left(${n.value}\\right)`; // envolver negativos una sola vez
+      return `\\left(${n.value}\\right)`;
     }
     return `${n.value}`;
   }
@@ -90,55 +88,54 @@ function reduceOnceNoFinal(n){
   return {node:n, changed:false, final:false};
 }
 
-// ---------- Builders ----------
+// Helpers
 function numLeaf(){
   let v = randInt(-10, 10);
-  if(v===0) v = (Math.random()<0.5 ? -1 : 1);
+  if(Math.random()<0.2 && v===0) v = 1;
   return {type:'num', value:v};
 }
 function opCombine(a, op, b){ return {type:'op', op, left:clone(a), right:clone(b)}; }
 
 function buildDen_LMN(target){
-  for(let tries=0; tries<100; tries++){
+  for(let tries=0; tries<200; tries++){
     const M=numLeaf(), N=numLeaf();
     const Lval = target + M.value - N.value;
-    if(inRangeNZ(Lval)){
-      return {
-        group: { type:'group', kind:'[]', child: opCombine({type:'num', value:Lval}, '-', opCombine(M,'-',N)) },
-        L:{type:'num', value:Lval}, M, N
-      };
+    if(Lval>=-10 && Lval<=10){
+      const L={type:'num', value:Lval};
+      return { group: { type:'group', kind:'[]', child: opCombine(L,'-', opCombine(M,'-',N)) } };
     }
   }
-  // fallback to simple [target - (1 - 1)]
-  return {
-    group: { type:'group', kind:'[]', child: opCombine({type:'num', value:target||2}, '-', opCombine({type:'num', value:1}, '-', {type:'num', value:1})) }
-  };
-}
-function buildDen_negH_plus_I_minus_J(target){
-  for(let tries=0; tries<100; tries++){
-    const H=numLeaf(), I=numLeaf();
-    const Jval = -H.value + I.value - target;
-    if(inRangeNZ(Jval)){
-      return {
-        group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-Math.abs(H.value)}, '+', opCombine(I,'-', {type:'num', value:Jval})) },
-        H, I, J:{type:'num', value:Jval}
-      };
-    }
-  }
-  return {
-    group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-2}, '+', opCombine({type:'num', value:target+1}, '-', {type:'num', value:1})) }
-  };
+  // fallback exacto: [ target - (0 - 0) ] = target
+  return { group: { type:'group', kind:'[]', child: opCombine({type:'num', value:target}, '-', opCombine({type:'num', value:0}, '-', {type:'num', value:0})) } };
 }
 
-// Pattern with exact division: { A - [ B - (C - D) ] } ÷ (-E)
-// Choose E (2..10), K (1..4), set A = E*K + B - C + D within ±10
+function buildDen_negH_plus_I_minus_J(target){
+  for(let tries=0; tries<200; tries++){
+    const H=numLeaf(), I=numLeaf();
+    const Jval = -H.value + I.value - target;
+    if(Jval>=-10 && Jval<=10){
+      const J={type:'num', value:Jval};
+      return { group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-Math.abs(H.value)}, '+', opCombine(I,'-', J)) } };
+    }
+  }
+  // fallback exacto: (-1) + (target - (-1)) = target
+  return { group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-1}, '+', opCombine({type:'num', value:target}, '-', {type:'num', value:-1})) } };
+}
+
+// Patterns
+function pattern1(){ const A=numLeaf(),B=numLeaf(),C=numLeaf(),D=numLeaf();
+  const inner=opCombine(B,'-',C);
+  const grp={type:'group',kind:'[]',child:opCombine(A,'-',inner)};
+  const right={type:'num',value:-Math.abs(D.value)};
+  return opCombine(grp,'*',right); }
+
 function pattern2_exact(){
   for(let tries=0; tries<200; tries++){
     const E = (Math.random()<0.5 ? 1 : -1) * randInt(2,10);
     const K = randInt(1,4);
     const B=numLeaf(), C=numLeaf(), D=numLeaf();
     const Aval = E*K + B.value - C.value + D.value;
-    if(inRangeNZ(Aval)){
+    if(Aval>=-10 && Aval<=10){
       const A={type:'num', value:Aval};
       const lvl2=opCombine(C,'-',D);
       const lvl1={type:'group', kind:'[]', child: opCombine(B,'-',lvl2)};
@@ -147,31 +144,50 @@ function pattern2_exact(){
       return opCombine(grp,'/', right);
     }
   }
-  // fallback: no division
-  return pattern6();
+  return pattern1();
 }
 
-// Pattern exact: (-K) ÷ [ L - (M - N) ]
-// Pick denVal (±2..±10), choose q so |denVal*q|<=10, set K = denVal*q.
+function pattern3(){ const A=numLeaf(),B=numLeaf(),C=numLeaf(),D=numLeaf(),E=numLeaf();
+  const lvl2=opCombine(D,'-',E);
+  const lvl1={type:'group',kind:'[]',child:opCombine(C,'-',lvl2)};
+  const grp={type:'group',kind:'{}',child:opCombine(B,'-',lvl1)};
+  const left={type:'num',value:-Math.abs(A.value)};
+  return opCombine(left,'+',grp); }
+
+function pattern4(){ const F=numLeaf(),G=numLeaf(),H=numLeaf(),I=numLeaf(),J=numLeaf();
+  const left=opCombine(F,'-',G);
+  const right={type:'group',kind:'[]',child:opCombine({type:'num',value:-Math.abs(H.value)},'+',opCombine(I,'-',J))};
+  return opCombine(left,'*',right); }
+
 function pattern5_exact(){
   for(let tries=0; tries<200; tries++){
     const denVal = (Math.random()<0.5 ? 1 : -1) * randInt(2,10);
-    // choose q so product within ±10
     const maxQ = Math.floor(10/Math.abs(denVal));
     if(maxQ < 1) continue;
     const q = randInt(1, Math.max(1, Math.min(4, maxQ)));
     const Kval = denVal * q;
-    if(inRangeNZ(Kval)){
-      const den = buildDen_LMN(denVal).group;
-      const num = {type:'num', value:-Math.abs(Kval)};
-      return opCombine(num,'/', den);
-    }
+    const den = buildDen_LMN(denVal).group;
+    const num = {type:'num', value:-Math.abs(Kval)};
+    return opCombine(num,'/', den);
   }
   return pattern4();
 }
 
-// Pattern exact: (AF - AG) ÷ [ (-AH) + (AI - AJ) ]
-// Build denominator to target denVal; choose diff=denVal*q within range; set AF=AG+diff
+function pattern6(){ const P=numLeaf(),Q=numLeaf(),R=numLeaf(),S=numLeaf(),T=numLeaf();
+  const grp={type:'group',kind:'{}',child:opCombine(P,'-',{type:'group',kind:'[]',child:opCombine(Q,'-',opCombine(R,'-',S))})};
+  const right={type:'num',value:-Math.abs(T.value)};
+  return opCombine(grp,'+',right); }
+
+function pattern7(){ const U=numLeaf(),V=numLeaf(),W=numLeaf(),X=numLeaf(),Y=numLeaf(),Z=numLeaf();
+  const left=opCombine(U,'-',V);
+  const grp={type:'group',kind:'{}',child:opCombine(W,'-',{type:'group',kind:'[]',child:opCombine(X,'-',opCombine(Y,'-',Z))})};
+  return opCombine(left,'+',grp); }
+
+function pattern8(){ const AA=numLeaf(),AB=numLeaf(),AC=numLeaf(),AD=numLeaf(),AE=numLeaf();
+  const left={type:'num',value:-Math.abs(AA.value)};
+  const grp={type:'group',kind:'{}',child:opCombine(AB,'-',{type:'group',kind:'[]',child:opCombine(AC,'-',opCombine(AD,'-',AE))})};
+  return opCombine(left,'*',grp); }
+
 function pattern9_exact(){
   for(let tries=0; tries<200; tries++){
     const denVal = (Math.random()<0.5 ? 1 : -1) * randInt(2,10);
@@ -181,7 +197,7 @@ function pattern9_exact(){
     const diff = denVal * q;
     const AG=numLeaf();
     const AFval = AG.value + diff;
-    if(inRangeNZ(AFval)){
+    if(AFval>=-10 && AFval<=10){
       const AF={type:'num', value:AFval};
       const den = buildDen_negH_plus_I_minus_J(denVal).group;
       const nume = opCombine(AF,'-',AG);
@@ -191,34 +207,6 @@ function pattern9_exact(){
   return pattern7();
 }
 
-// ---------- Non-division patterns ----------
-function pattern1(){ const A=numLeaf(),B=numLeaf(),C=numLeaf(),D=numLeaf();
-  const inner=opCombine(B,'-',C);
-  const grp={type:'group',kind:'[]',child:opCombine(A,'-',inner)};
-  const right={type:'num',value:-Math.abs(D.value)};
-  return opCombine(grp,'*',right); }
-function pattern3(){ const A=numLeaf(),B=numLeaf(),C=numLeaf(),D=numLeaf(),E=numLeaf();
-  const lvl2=opCombine(D,'-',E);
-  const lvl1={type:'group',kind:'[]',child:opCombine(C,'-',lvl2)};
-  const grp={type:'group',kind:'{}',child:opCombine(B,'-',lvl1)};
-  const left={type:'num',value:-Math.abs(A.value)};
-  return opCombine(left,'+',grp); }
-function pattern4(){ const F=numLeaf(),G=numLeaf(),H=numLeaf(),I=numLeaf(),J=numLeaf();
-  const left=opCombine(F,'-',G);
-  const right={type:'group',kind:'[]',child:opCombine({type:'num',value:-Math.abs(H.value)},'+',opCombine(I,'-',J))};
-  return opCombine(left,'*',right); }
-function pattern6(){ const P=numLeaf(),Q=numLeaf(),R=numLeaf(),S=numLeaf(),T=numLeaf();
-  const grp={type:'group',kind:'{}',child:opCombine(P,'-',{type:'group',kind:'[]',child:opCombine(Q,'-',opCombine(R,'-',S))})};
-  const right={type:'num',value:-Math.abs(T.value)};
-  return opCombine(grp,'+',right); }
-function pattern7(){ const U=numLeaf(),V=numLeaf(),W=numLeaf(),X=numLeaf(),Y=numLeaf(),Z=numLeaf();
-  const left=opCombine(U,'-',V);
-  const grp={type:'group',kind:'{}',child:opCombine(W,'-',{type:'group',kind:'[]',child:opCombine(X,'-',opCombine(Y,'-',Z))})};
-  return opCombine(left,'+',grp); }
-function pattern8(){ const AA=numLeaf(),AB=numLeaf(),AC=numLeaf(),AD=numLeaf(),AE=numLeaf();
-  const left={type:'num',value:-Math.abs(AA.value)};
-  const grp={type:'group',kind:'{}',child:opCombine(AB,'-',{type:'group',kind:'[]',child:opCombine(AC,'-',opCombine(AD,'-',AE))})};
-  return opCombine(left,'*',grp); }
 function pattern10(){ const AK=numLeaf(),AL=numLeaf(),AM=numLeaf(),AN=numLeaf(),AO=numLeaf(),AP=numLeaf();
   const left={type:'group',kind:'{}',child:opCombine(AK,'-',opCombine(AL,'-',AM))};
   const right={type:'group',kind:'[]',child:opCombine(AN,'-',opCombine(AO,'-',AP))};
@@ -226,7 +214,7 @@ function pattern10(){ const AK=numLeaf(),AL=numLeaf(),AM=numLeaf(),AN=numLeaf(),
 
 const PATTERNS = [pattern1, pattern2_exact, pattern3, pattern4, pattern5_exact, pattern6, pattern7, pattern8, pattern9_exact, pattern10];
 
-// ---------- SCORM helpers ----------
+// SCORM helpers
 function toHHMMSS(seconds){ const s=Math.max(0,Math.floor(seconds)); const h=String(Math.floor(s/3600)).padStart(2,'0'); const m=String(Math.floor((s%3600)/60)).padStart(2,'0'); const sec=String(s%60).padStart(2,'0'); return `${h}:${m}:${sec}`;}
 function nowHHMMSS(){ const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;}
 function logInteraction({id, learner, correct, result, seconds, attempt}){
@@ -248,31 +236,30 @@ function saveStats(){
   SCORM12.commit();
 }
 
-// ---------- Input parsing (robusto con unicode menos) ----------
+// Input parsing
 function normalizeIntInput(s){
-  return s
-    .replace(/\s+/g, '')                               // quitar espacios
-    .replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-') // distintos guiones/menos -> '-'
-    .replace(/^\+/, '');                               // quitar '+' inicial
+  return (s||'')
+    .replace(/\s+/g, '')
+    .replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-') // distintos "menos" -> '-'
+    .replace(/^\+/, '');
 }
 function parseIntegerStrict(s){
-  const t = normalizeIntInput(s || '');
+  const t = normalizeIntInput(s);
   if(!/^-?\d+$/.test(t)) return null;
   const n = Number(t);
-  if(!Number.isFinite(n) || !Number.isInteger(n)) return null;
-  return n;
+  return Number.isInteger(n) ? n : null;
 }
 
-// ---------- UI flow ----------
+// Flow
 function render(){
   const q=document.getElementById('q'); const idx=document.getElementById('idx'); const total=document.getElementById('total');
   const input=document.getElementById('answer'); const btn=document.getElementById('btn'); const hintsDiv=document.getElementById('hints');
-
   idx.textContent=STATE.current+1; total.textContent=STATE.total;
 
   if(!STATE.items[STATE.current]){
     const ast=clone(PATTERNS[Math.floor(Math.random()*PATTERNS.length)]());
-    STATE.items[STATE.current]={ ast, value: Math.trunc(evalNode(ast)) };
+    const val = Math.round(evalNode(ast)); // exacto por construcción
+    STATE.items[STATE.current]={ ast, value: val };
   }
   const latex=latexNode(STATE.items[STATE.current].ast);
   q.innerHTML=`\\( ${latex} \\)`;
@@ -311,13 +298,11 @@ function start(){
 
 function check(){
   const input=document.getElementById('answer'); const feedback=document.getElementById('feedback'); const btn=document.getElementById('btn'); btn.disabled=true;
-
   const parsed = parseIntegerStrict(input.value);
   if(parsed===null){
-    feedback.innerHTML = `<span class="ko">Introduce un número <strong>entero</strong> (puedes usar signo − o -).</span>`;
+    feedback.innerHTML = `<span class="ko">Introduce un número <strong>entero</strong>.</span>`;
     btn.disabled=false; input.focus(); return;
   }
-
   const expected=STATE.items[STATE.current].value;
   const ok=(parsed===expected);
   if(ok) STATE.correct++;
@@ -336,8 +321,7 @@ function check(){
     }, 600);
   }else{
     feedback.innerHTML = `<span class="ko">No es correcto. Inténtalo de nuevo o pulsa <em>Mostrar pista</em>.</span>`;
-    STATE.attempt++;
-    STATE.qStartMs=performance.now();
+    STATE.attempt++; STATE.qStartMs=performance.now();
     setTimeout(()=>{ input.value=''; input.focus(); btn.disabled=false; }, 300);
   }
 }
