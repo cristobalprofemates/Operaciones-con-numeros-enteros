@@ -112,10 +112,11 @@ function buildDen_LMN(target){
 function buildDen_negH_plus_I_minus_J(target){
   for(let tries=0; tries<200; tries++){
     const H=numLeaf(), I=numLeaf();
-    const Jval = -H.value + I.value - target;
+    const absH = Math.abs(H.value);
+    const Jval = I.value - target - absH;
     if(Jval>=-10 && Jval<=10){
       const J={type:'num', value:Jval};
-      return { group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-Math.abs(H.value)}, '+', opCombine(I,'-', J)) } };
+      return { group: { type:'group', kind:'[]', child: opCombine({type:'num', value:-absH}, '+', opCombine(I,'-', J)) } };
     }
   }
   // fallback exacto: (-1) + (target - (-1)) = target
